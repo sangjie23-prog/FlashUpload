@@ -28,6 +28,10 @@ export function mergeChunks(data) {
   return api.post('/files/merge', data)
 }
 
+export function getMergeStatus(fileMd5) {
+  return api.get(`/files/merge-status/${fileMd5}`)
+}
+
 export function getFileList(page = 0, size = 10, keyword = '') {
   const params = { page, size }
   if (keyword) {

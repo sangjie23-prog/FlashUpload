@@ -39,8 +39,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
+import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * 第三阶段在本地落盘基础上补充元数据入库，先保证普通上传链路完整闭环。
@@ -58,11 +60,15 @@ public class FileStorageService {
     private final FileInfoRepository fileInfoRepository;
     private final FileChunkRepository fileChunkRepository;
     private final MinIOService minIOService;
+    private final ThreadPoolExecutor mergeTaskExecutor;
+    private final TransactionTemplate transactionTemplate;
 
-    public FileStorageService(FileInfoRepository fileInfoRepository, FileChunkRepository fileChunkRepository, MinIOService minIOService) {
+    public FileStorageService(FileInfoRepository fileInfoRepository, FileChunkRepository fileChunkRepository, MinIOService minIOService, ThreadPoolExecutor mergeTaskExecutor, TransactionTemplate transactionTemplate) {
         this.fileInfoRepository = fileInfoRepository;
         this.fileChunkRepository = fileChunkRepository;
         this.minIOService = minIOService;
+        this.mergeTaskExecutor = mergeTaskExecutor;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Transactional
@@ -203,11 +209,11 @@ public class FileStorageService {
     /**
      * 第六阶段：合并分片为完整文件
      * 阶段11：合并完成后上传到 MinIO，清理本地临时文件
+     * 阶段13：改为异步合并，只提交任务不阻塞
      * 1. 校验分片数量是否完整
-     * 2. 按分片索引顺序合并文件
-     * 3. 上传到 MinIO 对象存储
-     * 4. 更新文件元数据状态为 COMPLETED
-     * 5. 清理临时分片文件和合并文件
+     * 2. 更新状态为 MERGING
+     * 3. 提交异步合并任务
+     * 4. 立即返回文件信息
      */
     @Transactional
     public FileInfo mergeChunks(MergeRequest request) throws IOException {
@@ -229,71 +235,127 @@ public class FileStorageService {
             );
         }
 
-        // 按分片索引排序
-        chunks.sort(Comparator.comparingInt(FileChunk::getChunkIndex));
-
-        // 创建最终文件存储目录
-        Path finalDirectory = Path.of(storagePath, LocalDateTime.now().format(DIRECTORY_FORMATTER));
-        Files.createDirectories(finalDirectory);
-
-        // 生成最终文件名
-        String storedFileName = UUID.randomUUID() + "-" + buildSafeFileName(request.getFileName());
-        Path finalFilePath = finalDirectory.resolve(storedFileName);
-
-        // 按顺序合并分片
-        try (OutputStream outputStream = Files.newOutputStream(finalFilePath)) {
-            for (FileChunk chunk : chunks) {
-                Path chunkPath = Path.of(chunk.getChunkPath());
-                if (!Files.exists(chunkPath)) {
-                    throw new IOException("分片文件不存在: " + chunk.getChunkPath());
-                }
-                Files.copy(chunkPath, outputStream);
-            }
-        }
-
-        // 获取合并后文件大小
-        long finalFileSize = Files.size(finalFilePath);
-
-        // 阶段11：上传到 MinIO 对象存储
-        String minioObjectName = request.getFileMd5() + "/" + storedFileName;
-        try (InputStream inputStream = Files.newInputStream(finalFilePath)) {
-            minIOService.uploadFile(minioObjectName, inputStream, request.getContentType(), finalFileSize);
-        }
-
-        // 更新或创建文件元数据
+        // 阶段13：更新或创建文件元数据，状态设为 MERGING
         Optional<FileInfo> fileInfoOpt = fileInfoRepository.findByFileMd5(request.getFileMd5());
         FileInfo fileInfo;
         
         if (fileInfoOpt.isPresent()) {
             fileInfo = fileInfoOpt.get();
             fileInfo.setFileName(request.getFileName());
-            fileInfo.setFileSize(finalFileSize);
+            fileInfo.setFileSize(request.getFileSize());
             fileInfo.setContentType(request.getContentType());
-            fileInfo.setStoragePath(minioObjectName);
             fileInfo.setStatus(STATUS_COMPLETED);
+            fileInfo.setMergeStatus("MERGING");
+            fileInfo.setMergeError(null);
         } else {
             fileInfo = new FileInfo();
             fileInfo.setFileName(request.getFileName());
             fileInfo.setFileMd5(request.getFileMd5());
-            fileInfo.setFileSize(finalFileSize);
+            fileInfo.setFileSize(request.getFileSize());
             fileInfo.setContentType(request.getContentType());
-            fileInfo.setStoragePath(minioObjectName);
+            fileInfo.setStoragePath("");
             fileInfo.setStatus(STATUS_COMPLETED);
+            fileInfo.setMergeStatus("MERGING");
+            fileInfo.setMergeError(null);
         }
 
         FileInfo savedFileInfo = fileInfoRepository.save(fileInfo);
 
-        // 清理分片文件和数据库记录
-        deleteChunks(chunks);
-
-        // 阶段11：清理本地合并文件
-        try {
-            Files.deleteIfExists(finalFilePath);
-        } catch (IOException e) {
-            System.err.println("清理本地合并文件失败: " + finalFilePath);
-        }
+        // 阶段13：提交异步合并任务
+        mergeTaskExecutor.submit(() -> executeMergeTask(request, chunks, savedFileInfo.getId()));
 
         return savedFileInfo;
+    }
+
+    /**
+     * 阶段13：执行异步合并任务
+     * 1. 按分片索引顺序合并文件
+     * 2. 上传到 MinIO 对象存储
+     * 3. 更新文件元数据
+     * 4. 清理临时文件
+     */
+    public void executeMergeTask(MergeRequest request, List<FileChunk> chunks, Long fileInfoId) {
+        try {
+            // 按分片索引排序
+            chunks.sort(Comparator.comparingInt(FileChunk::getChunkIndex));
+
+            // 创建最终文件存储目录
+            Path finalDirectory = Path.of(storagePath, LocalDateTime.now().format(DIRECTORY_FORMATTER));
+            Files.createDirectories(finalDirectory);
+
+            // 生成最终文件名
+            String storedFileName = UUID.randomUUID() + "-" + buildSafeFileName(request.getFileName());
+            Path finalFilePath = finalDirectory.resolve(storedFileName);
+
+            // 按顺序合并分片
+            try (OutputStream outputStream = Files.newOutputStream(finalFilePath)) {
+                for (FileChunk chunk : chunks) {
+                    Path chunkPath = Path.of(chunk.getChunkPath());
+                    if (!Files.exists(chunkPath)) {
+                        throw new IOException("分片文件不存在: " + chunk.getChunkPath());
+                    }
+                    Files.copy(chunkPath, outputStream);
+                }
+            }
+
+            // 获取合并后文件大小
+            long finalFileSize = Files.size(finalFilePath);
+
+            // 阶段11：上传到 MinIO 对象存储
+            String minioObjectName = request.getFileMd5() + "/" + storedFileName;
+            try (InputStream inputStream = Files.newInputStream(finalFilePath)) {
+                minIOService.uploadFile(minioObjectName, inputStream, request.getContentType(), finalFileSize);
+            }
+
+            // 阶段13：使用 TransactionTemplate 管理事务
+            transactionTemplate.execute(status -> {
+                // 更新文件元数据
+                Optional<FileInfo> fileInfoOpt = fileInfoRepository.findById(fileInfoId);
+                if (fileInfoOpt.isPresent()) {
+                    FileInfo fileInfo = fileInfoOpt.get();
+                    fileInfo.setFileSize(finalFileSize);
+                    fileInfo.setStoragePath(minioObjectName);
+                    fileInfo.setMergeStatus("SUCCESS");
+                    fileInfo.setMergeError(null);
+                    fileInfoRepository.save(fileInfo);
+                }
+
+                // 清理分片文件和数据库记录
+                deleteChunks(chunks);
+                return null;
+            });
+
+            // 阶段11：清理本地合并文件
+            try {
+                Files.deleteIfExists(finalFilePath);
+            } catch (IOException e) {
+                System.err.println("清理本地合并文件失败: " + finalFilePath);
+            }
+        } catch (Exception e) {
+            // 合并失败，记录错误原因
+            System.err.println("异步合并失败: " + e.getMessage());
+            e.printStackTrace();
+            
+            // 阶段13：使用 TransactionTemplate 管理事务
+            transactionTemplate.execute(status -> {
+                Optional<FileInfo> fileInfoOpt = fileInfoRepository.findById(fileInfoId);
+                if (fileInfoOpt.isPresent()) {
+                    FileInfo fileInfo = fileInfoOpt.get();
+                    fileInfo.setMergeStatus("FAILED");
+                    fileInfo.setMergeError(e.getMessage());
+                    fileInfoRepository.save(fileInfo);
+                }
+                return null;
+            });
+        }
+    }
+
+    /**
+     * 阶段13：查询合并状态
+     */
+    public FileInfo getMergeStatus(String fileMd5) {
+        return fileInfoRepository.findByFileMd5(fileMd5)
+            .orElseThrow(() -> new IllegalArgumentException("文件不存在，MD5: " + fileMd5));
     }
 
     /**

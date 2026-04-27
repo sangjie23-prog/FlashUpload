@@ -118,7 +118,7 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, Loading, SuccessFilled, CircleCloseFilled } from '@element-plus/icons-vue'
 import SparkMD5 from 'spark-md5'
-import { checkFile, uploadChunk, mergeChunks } from '../api/fileApi'
+import { checkFile, uploadChunk, mergeChunks, getMergeStatus } from '../api/fileApi'
 
 const selectedFile = ref(null)
 const fileMd5 = ref('')
@@ -317,14 +317,46 @@ const mergeChunksFile = async () => {
       contentType: selectedFile.value.type
     })
 
-    uploadStatus.value = 'completed'
-    uploadProgress.value = 100
-    ElMessage.success('文件上传成功！')
+    ElMessage.info('分片上传完成，正在合并文件...')
+    await pollMergeStatus()
   } catch (error) {
     uploadStatus.value = 'error'
     errorMessage.value = '合并分片失败：' + error.message
     ElMessage.error(errorMessage.value)
   }
+}
+
+const pollMergeStatus = async () => {
+  const maxAttempts = 60
+  let attempts = 0
+
+  while (attempts < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    attempts++
+
+    try {
+      const response = await getMergeStatus(fileMd5.value)
+      const mergeStatus = response.data.mergeStatus
+
+      if (mergeStatus === 'SUCCESS') {
+        uploadStatus.value = 'completed'
+        uploadProgress.value = 100
+        ElMessage.success('文件上传成功！')
+        return
+      } else if (mergeStatus === 'FAILED') {
+        uploadStatus.value = 'error'
+        errorMessage.value = '文件合并失败：' + (response.data.mergeError || '未知错误')
+        ElMessage.error(errorMessage.value)
+        return
+      }
+    } catch (error) {
+      console.error('查询合并状态失败:', error)
+    }
+  }
+
+  uploadStatus.value = 'error'
+  errorMessage.value = '合并超时，请稍后重试'
+  ElMessage.error(errorMessage.value)
 }
 
 const updateUploadSpeed = () => {

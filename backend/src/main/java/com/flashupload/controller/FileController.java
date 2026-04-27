@@ -80,6 +80,7 @@ public class FileController {
 
     /**
      * 第六阶段：合并分片为完整文件
+     * 阶段13：改为异步合并，只提交任务不阻塞
      * 请求参数：
      * - fileMd5: 文件 MD5
      * - fileName: 原始文件名
@@ -90,6 +91,14 @@ public class FileController {
     @PostMapping("/merge")
     public FileInfo mergeChunks(@RequestBody MergeRequest request) throws IOException {
         return fileStorageService.mergeChunks(request);
+    }
+
+    /**
+     * 阶段13：查询合并状态
+     */
+    @GetMapping("/merge-status/{fileMd5}")
+    public FileInfo getMergeStatus(@PathVariable String fileMd5) {
+        return fileStorageService.getMergeStatus(fileMd5);
     }
 
     /**

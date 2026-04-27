@@ -39,6 +39,12 @@ public class FileInfo {
     @Column(name = "status", nullable = false, length = 32)
     private String status;
 
+    @Column(name = "merge_status", length = 32)
+    private String mergeStatus;
+
+    @Column(name = "merge_error", length = 500)
+    private String mergeError;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -127,5 +133,21 @@ public class FileInfo {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public String getMergeStatus() {
+        return mergeStatus;
+    }
+
+    public void setMergeStatus(String mergeStatus) {
+        this.mergeStatus = mergeStatus;
+    }
+
+    public String getMergeError() {
+        return mergeError;
+    }
+
+    public void setMergeError(String mergeError) {
+        this.mergeError = mergeError;
     }
 }
