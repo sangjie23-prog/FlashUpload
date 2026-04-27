@@ -11,10 +11,17 @@ import com.flashupload.service.FileStorageService;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.core.io.Resource;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -82,6 +89,28 @@ public class FileController {
     @PostMapping("/merge")
     public FileInfo mergeChunks(@RequestBody MergeRequest request) throws IOException {
         return fileStorageService.mergeChunks(request);
+    }
+
+    /**
+     * 第七阶段：查询文件列表，支持分页
+     * 请求参数：
+     * - page: 页码，从 0 开始，默认 0
+     * - size: 每页大小，默认 10
+     */
+    @GetMapping
+    public Page<FileInfo> listFiles(
+            @RequestParam(defaultValue = "0") Integer page,
+            @RequestParam(defaultValue = "10") Integer size) {
+        Pageable pageable = PageRequest.of(page, size);
+        return fileStorageService.listFiles(pageable);
+    }
+
+    /**
+     * 第七阶段：下载文件
+     */
+    @GetMapping("/{id}/download")
+    public ResponseEntity<Resource> downloadFile(@PathVariable Long id) {
+        return fileStorageService.downloadFile(id);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

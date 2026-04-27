@@ -14,6 +14,8 @@ import com.flashupload.util.Md5Utils;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -25,8 +27,15 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -353,5 +362,39 @@ public class FileStorageService {
             return "unnamed-file";
         }
         return fileName;
+    }
+
+    /**
+     * 第七阶段：分页查询文件列表
+     */
+    public Page<FileInfo> listFiles(Pageable pageable) {
+        return fileInfoRepository.findAllByOrderByCreatedAtDesc(pageable);
+    }
+
+    /**
+     * 第七阶段：下载文件
+     * 1. 根据 ID 查询文件元数据
+     * 2. 检查文件是否存在
+     * 3. 返回文件资源供下载
+     */
+    public ResponseEntity<Resource> downloadFile(Long id) {
+        FileInfo fileInfo = fileInfoRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("文件不存在，ID: " + id));
+
+        Path filePath = Path.of(fileInfo.getStoragePath());
+        if (!Files.exists(filePath)) {
+            throw new IllegalArgumentException("文件物理文件不存在: " + fileInfo.getStoragePath());
+        }
+
+        Resource resource = new FileSystemResource(filePath);
+
+        String encodedFileName = URLEncoder.encode(fileInfo.getFileName(), StandardCharsets.UTF_8)
+            .replace("+", "%20");
+
+        return ResponseEntity.ok()
+            .contentType(MediaType.APPLICATION_OCTET_STREAM)
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedFileName)
+            .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(fileInfo.getFileSize()))
+            .body(resource);
     }
 }
