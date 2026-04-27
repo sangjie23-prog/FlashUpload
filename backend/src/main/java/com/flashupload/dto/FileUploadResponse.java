@@ -3,16 +3,26 @@ package com.flashupload.dto;
 import java.time.LocalDateTime;
 
 /**
- * 第二阶段返回普通上传结果，便于前端和 curl 直接查看上传后的核心信息。
+ * 第三阶段返回普通上传和入库结果，便于前端和 curl 直接查看核心元数据。
  */
 public class FileUploadResponse {
 
+    private Long id;
     private String fileName;
     private String fileMd5;
     private long fileSize;
     private String contentType;
     private String storagePath;
+    private String status;
     private LocalDateTime uploadedAt;
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
 
     public String getFileName() {
         return fileName;
@@ -52,6 +62,14 @@ public class FileUploadResponse {
 
     public void setStoragePath(String storagePath) {
         this.storagePath = storagePath;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
     }
 
     public LocalDateTime getUploadedAt() {

@@ -1,5 +1,7 @@
 package com.flashupload.controller;
 
+import com.flashupload.dto.FileCheckRequest;
+import com.flashupload.dto.FileCheckResponse;
 import com.flashupload.dto.FileUploadResponse;
 import com.flashupload.service.FileStorageService;
 import java.io.IOException;
@@ -10,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,6 +29,14 @@ public class FileController {
 
     public FileController(FileStorageService fileStorageService) {
         this.fileStorageService = fileStorageService;
+    }
+
+    /**
+     * 第四阶段：检查文件是否已存在，支持秒传和断点续传
+     */
+    @PostMapping("/check")
+    public FileCheckResponse checkFile(@RequestBody FileCheckRequest request) {
+        return fileStorageService.checkFile(request);
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

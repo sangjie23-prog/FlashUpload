@@ -1,6 +1,7 @@
 package com.flashupload;
 
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -16,11 +17,17 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * 第二阶段增加普通上传测试，确保接口和本地落盘行为可以稳定验证。
+ * 第三阶段增加元数据入库测试，确保普通上传已经形成落盘加持久化闭环。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@TestPropertySource(properties = "flash-upload.storage.path=target/test-storage/files")
+@TestPropertySource(properties = {
+    "flash-upload.storage.path=target/test-storage/files",
+    "spring.datasource.url=jdbc:h2:mem:flashupload;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE",
+    "spring.datasource.driver-class-name=org.h2.Driver",
+    "spring.datasource.username=sa",
+    "spring.datasource.password="
+})
 class FileControllerTests {
 
     @Autowired
@@ -37,9 +44,11 @@ class FileControllerTests {
 
         mockMvc.perform(multipart("/api/files/upload").file(file))
             .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id", notNullValue()))
             .andExpect(jsonPath("$.fileName", is("hello.txt")))
             .andExpect(jsonPath("$.fileSize", is(18)))
-            .andExpect(jsonPath("$.contentType", is("text/plain")));
+            .andExpect(jsonPath("$.contentType", is("text/plain")))
+            .andExpect(jsonPath("$.status", is("COMPLETED")));
 
         Path storageRoot = Path.of("target/test-storage/files");
         boolean fileExists = Files.exists(storageRoot) && Files.walk(storageRoot).anyMatch(Files::isRegularFile);

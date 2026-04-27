@@ -4,13 +4,28 @@ server:
 spring:
   application:
     name: flash-upload-backend
+  datasource:
+    url: jdbc:h2:file:./data/flashupload;MODE=MySQL;AUTO_SERVER=TRUE;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
   servlet:
     multipart:
       max-file-size: 100MB
       max-request-size: 100MB
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        format_sql: true
+  sql:
+    init:
+      mode: always
 
 flash-upload:
   storage:
     path: storage/files
 
-# 第二阶段先使用本地磁盘保存普通上传文件，后续再扩展数据库和分片配置。
+# 默认使用本地 H2 保证项目随时可启动，切换到 local 配置后可连接真实 MySQL。
