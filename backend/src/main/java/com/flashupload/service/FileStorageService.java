@@ -510,4 +510,53 @@ public class FileStorageService {
             .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(fileInfo.getFileSize()))
             .body(resource);
     }
+
+    /**
+     * 阶段14：预览文件
+     * 支持图片、PDF、文本文件预览
+     * 不支持的文件类型返回友好提示
+     */
+    public ResponseEntity<Resource> previewFile(Long id) {
+        FileInfo fileInfo = fileInfoRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("文件不存在，ID: " + id));
+
+        String contentType = fileInfo.getContentType();
+        if (contentType == null) {
+            contentType = MediaType.APPLICATION_OCTET_STREAM_VALUE;
+        }
+
+        // 判断是否支持预览
+        if (!isPreviewable(contentType)) {
+            throw new IllegalArgumentException("该文件类型不支持预览：" + contentType);
+        }
+
+        // 阶段11：从 MinIO 读取文件流
+        String minioObjectName = fileInfo.getStoragePath();
+        InputStream minioInputStream = minIOService.downloadFile(minioObjectName);
+
+        Resource resource = new InputStreamResource(minioInputStream);
+
+        MediaType mediaType;
+        try {
+            mediaType = MediaType.parseMediaType(contentType);
+        } catch (Exception e) {
+            mediaType = MediaType.APPLICATION_OCTET_STREAM;
+        }
+
+        return ResponseEntity.ok()
+            .contentType(mediaType)
+            .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(fileInfo.getFileSize()))
+            .body(resource);
+    }
+
+    /**
+     * 阶段14：判断文件类型是否支持预览
+     */
+    private boolean isPreviewable(String contentType) {
+        return contentType.startsWith("image/")
+            || contentType.equals("application/pdf")
+            || contentType.startsWith("text/")
+            || contentType.equals("application/json")
+            || contentType.equals("application/xml");
+    }
 }

@@ -138,6 +138,15 @@ public class FileController {
         return fileStorageService.downloadFile(id);
     }
 
+    /**
+     * 阶段14：预览文件
+     * 支持图片、PDF、文本文件预览
+     */
+    @GetMapping("/{id}/preview")
+    public ResponseEntity<Resource> previewFile(@PathVariable Long id) {
+        return fileStorageService.previewFile(id);
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgumentException(IllegalArgumentException exception) {
         Map<String, Object> body = new LinkedHashMap<>();

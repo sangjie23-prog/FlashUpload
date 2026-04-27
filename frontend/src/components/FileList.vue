@@ -41,8 +41,16 @@
           {{ formatTime(row.createdAt) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="200">
+      <el-table-column label="操作" width="280">
         <template #default="{ row }">
+          <el-button
+            type="success"
+            size="small"
+            :disabled="row.status !== 'COMPLETED' || !isPreviewable(row.contentType)"
+            @click="handlePreview(row)"
+          >
+            预览
+          </el-button>
           <el-button
             type="primary"
             size="small"
@@ -76,6 +84,23 @@
       @size-change="loadFileList"
     />
   </el-card>
+
+  <el-dialog
+    v-model="previewVisible"
+    :title="previewFileName"
+    width="80%"
+    @close="handlePreviewClose"
+  >
+    <div v-if="previewType === 'image'" class="preview-container">
+      <img :src="previewUrl" :alt="previewFileName" style="max-width: 100%; max-height: 80vh;" />
+    </div>
+    <div v-else-if="previewType === 'pdf'" class="preview-container">
+      <iframe :src="previewUrl" style="width: 100%; height: 80vh; border: none;"></iframe>
+    </div>
+    <div v-else-if="previewType === 'text'" class="preview-container text-preview">
+      <pre>{{ textContent }}</pre>
+    </div>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -83,6 +108,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { getFileList, downloadFile, deleteFile } from '../api/fileApi'
+import api from '../api/fileApi'
 
 const fileList = ref([])
 const loading = ref(false)
@@ -90,6 +116,12 @@ const currentPage = ref(0)
 const pageSize = ref(10)
 const total = ref(0)
 const searchKeyword = ref('')
+
+const previewVisible = ref(false)
+const previewUrl = ref('')
+const previewType = ref('')
+const previewFileName = ref('')
+const textContent = ref('')
 
 onMounted(() => {
   loadFileList()
@@ -151,6 +183,48 @@ const formatTime = (time) => {
   if (!time) return '-'
   return new Date(time).toLocaleString('zh-CN')
 }
+
+const isPreviewable = (contentType) => {
+  if (!contentType) return false
+  return contentType.startsWith('image/')
+    || contentType === 'application/pdf'
+    || contentType.startsWith('text/')
+    || contentType === 'application/json'
+    || contentType === 'application/xml'
+}
+
+const handlePreview = async (file) => {
+  previewFileName.value = file.fileName
+  const contentType = file.contentType || ''
+
+  if (contentType.startsWith('image/')) {
+    previewType.value = 'image'
+    previewUrl.value = `${api.defaults.baseURL}/files/${file.id}/preview`
+  } else if (contentType === 'application/pdf') {
+    previewType.value = 'pdf'
+    previewUrl.value = `${api.defaults.baseURL}/files/${file.id}/preview`
+  } else if (contentType.startsWith('text/') || contentType === 'application/json' || contentType === 'application/xml') {
+    previewType.value = 'text'
+    try {
+      const response = await api.get(`/files/${file.id}/preview`, { responseType: 'text' })
+      textContent.value = response.data
+    } catch (error) {
+      ElMessage.error('预览失败')
+      return
+    }
+  } else {
+    ElMessage.warning('该文件类型不支持预览')
+    return
+  }
+
+  previewVisible.value = true
+}
+
+const handlePreviewClose = () => {
+  previewUrl.value = ''
+  textContent.value = ''
+  previewType.value = ''
+}
 </script>
 
 <style scoped>
@@ -165,5 +239,29 @@ const formatTime = (time) => {
 .header-actions {
   display: flex;
   align-items: center;
+}
+
+.preview-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
+
+.text-preview {
+  background-color: #f5f7fa;
+  padding: 20px;
+  border-radius: 4px;
+  max-height: 80vh;
+  overflow: auto;
+}
+
+.text-preview pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: monospace;
+  font-size: 14px;
+  line-height: 1.6;
 }
 </style>
