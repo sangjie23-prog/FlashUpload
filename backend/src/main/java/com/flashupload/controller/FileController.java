@@ -5,6 +5,8 @@ import com.flashupload.dto.ChunkUploadResponse;
 import com.flashupload.dto.FileCheckRequest;
 import com.flashupload.dto.FileCheckResponse;
 import com.flashupload.dto.FileUploadResponse;
+import com.flashupload.dto.MergeRequest;
+import com.flashupload.entity.FileInfo;
 import com.flashupload.service.FileStorageService;
 import java.io.IOException;
 import java.util.LinkedHashMap;
@@ -14,6 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -65,6 +68,20 @@ public class FileController {
         request.setChunkIndex(chunkIndex);
         request.setTotalChunks(totalChunks);
         return fileStorageService.uploadChunk(chunkFile, request);
+    }
+
+    /**
+     * 第六阶段：合并分片为完整文件
+     * 请求参数：
+     * - fileMd5: 文件 MD5
+     * - fileName: 原始文件名
+     * - totalChunks: 总分片数
+     * - fileSize: 文件大小
+     * - contentType: 文件内容类型
+     */
+    @PostMapping("/merge")
+    public FileInfo mergeChunks(@RequestBody MergeRequest request) throws IOException {
+        return fileStorageService.mergeChunks(request);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

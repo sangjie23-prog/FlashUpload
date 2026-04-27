@@ -19,4 +19,9 @@ public interface FileChunkRepository extends JpaRepository<FileChunk, Long> {
      * 根据文件 MD5 和分片索引查询（用于判断分片是否已上传）
      */
     FileChunk findByFileMd5AndChunkIndex(String fileMd5, Integer chunkIndex);
+
+    /**
+     * 根据文件 MD5 删除所有分片记录
+     */
+    void deleteByFileMd5(String fileMd5);
 }

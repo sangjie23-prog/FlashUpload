@@ -5,6 +5,7 @@ import com.flashupload.dto.ChunkUploadResponse;
 import com.flashupload.dto.FileCheckRequest;
 import com.flashupload.dto.FileCheckResponse;
 import com.flashupload.dto.FileUploadResponse;
+import com.flashupload.dto.MergeRequest;
 import com.flashupload.entity.FileChunk;
 import com.flashupload.entity.FileInfo;
 import com.flashupload.repository.FileChunkRepository;
@@ -12,12 +13,14 @@ import com.flashupload.repository.FileInfoRepository;
 import com.flashupload.util.Md5Utils;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -183,6 +186,113 @@ public class FileStorageService {
         response.setUploadedChunks(uploadedChunks);
         response.setIsComplete(false);
         return response;
+    }
+
+    /**
+     * 第六阶段：合并分片为完整文件
+     * 1. 校验分片数量是否完整
+     * 2. 按分片索引顺序合并文件
+     * 3. 更新文件元数据状态为 COMPLETED
+     * 4. 清理临时分片文件
+     */
+    @Transactional
+    public FileInfo mergeChunks(MergeRequest request) throws IOException {
+        if (request.getFileMd5() == null || request.getFileName() == null || request.getTotalChunks() == null) {
+            throw new IllegalArgumentException("合并请求参数不完整");
+        }
+
+        // 查询所有已上传的分片
+        List<FileChunk> chunks = fileChunkRepository.findByFileMd5(request.getFileMd5());
+        
+        if (chunks.isEmpty()) {
+            throw new IllegalArgumentException("未找到任何分片，无法合并");
+        }
+
+        // 校验分片数量是否完整
+        if (chunks.size() != request.getTotalChunks()) {
+            throw new IllegalArgumentException(
+                String.format("分片不完整，已上传 %d 个，需要 %d 个", chunks.size(), request.getTotalChunks())
+            );
+        }
+
+        // 按分片索引排序
+        chunks.sort(Comparator.comparingInt(FileChunk::getChunkIndex));
+
+        // 创建最终文件存储目录
+        Path finalDirectory = Path.of(storagePath, LocalDateTime.now().format(DIRECTORY_FORMATTER));
+        Files.createDirectories(finalDirectory);
+
+        // 生成最终文件名
+        String storedFileName = UUID.randomUUID() + "-" + buildSafeFileName(request.getFileName());
+        Path finalFilePath = finalDirectory.resolve(storedFileName);
+
+        // 按顺序合并分片
+        try (OutputStream outputStream = Files.newOutputStream(finalFilePath)) {
+            for (FileChunk chunk : chunks) {
+                Path chunkPath = Path.of(chunk.getChunkPath());
+                if (!Files.exists(chunkPath)) {
+                    throw new IOException("分片文件不存在: " + chunk.getChunkPath());
+                }
+                Files.copy(chunkPath, outputStream);
+            }
+        }
+
+        // 获取合并后文件大小
+        long finalFileSize = Files.size(finalFilePath);
+
+        // 更新或创建文件元数据
+        Optional<FileInfo> fileInfoOpt = fileInfoRepository.findByFileMd5(request.getFileMd5());
+        FileInfo fileInfo;
+        
+        if (fileInfoOpt.isPresent()) {
+            fileInfo = fileInfoOpt.get();
+            fileInfo.setFileName(request.getFileName());
+            fileInfo.setFileSize(finalFileSize);
+            fileInfo.setContentType(request.getContentType());
+            fileInfo.setStoragePath(finalFilePath.toString());
+            fileInfo.setStatus(STATUS_COMPLETED);
+        } else {
+            fileInfo = new FileInfo();
+            fileInfo.setFileName(request.getFileName());
+            fileInfo.setFileMd5(request.getFileMd5());
+            fileInfo.setFileSize(finalFileSize);
+            fileInfo.setContentType(request.getContentType());
+            fileInfo.setStoragePath(finalFilePath.toString());
+            fileInfo.setStatus(STATUS_COMPLETED);
+        }
+
+        FileInfo savedFileInfo = fileInfoRepository.save(fileInfo);
+
+        // 清理分片文件和数据库记录
+        deleteChunks(chunks);
+
+        return savedFileInfo;
+    }
+
+    /**
+     * 删除分片文件和数据库记录
+     */
+    private void deleteChunks(List<FileChunk> chunks) {
+        for (FileChunk chunk : chunks) {
+            try {
+                Path chunkPath = Path.of(chunk.getChunkPath());
+                Files.deleteIfExists(chunkPath);
+            } catch (IOException e) {
+                // 记录日志但不影响主流程
+                System.err.println("删除分片文件失败: " + chunk.getChunkPath());
+            }
+        }
+        
+        // 删除数据库中的分片记录
+        fileChunkRepository.deleteByFileMd5(chunks.get(0).getFileMd5());
+        
+        // 尝试删除分片目录（如果为空）
+        try {
+            Path chunkDirectory = Path.of(storagePath, "chunks", chunks.get(0).getFileMd5());
+            Files.deleteIfExists(chunkDirectory);
+        } catch (IOException e) {
+            // 目录可能不为空，忽略错误
+        }
     }
 
     /**
