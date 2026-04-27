@@ -4,5 +4,13 @@ server:
 spring:
   application:
     name: flash-upload-backend
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
 
-# 第一阶段仅保留基础配置，数据库与文件存储配置后续逐步补充。
+flash-upload:
+  storage:
+    path: storage/files
+
+# 第二阶段先使用本地磁盘保存普通上传文件，后续再扩展数据库和分片配置。
