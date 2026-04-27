@@ -19,6 +19,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -93,16 +94,31 @@ public class FileController {
 
     /**
      * 第七阶段：查询文件列表，支持分页
+     * 第九阶段：支持按文件名关键字搜索
      * 请求参数：
      * - page: 页码，从 0 开始，默认 0
      * - size: 每页大小，默认 10
+     * - keyword: 文件名关键字，可选
      */
     @GetMapping
     public Page<FileInfo> listFiles(
             @RequestParam(defaultValue = "0") Integer page,
-            @RequestParam(defaultValue = "10") Integer size) {
+            @RequestParam(defaultValue = "10") Integer size,
+            @RequestParam(required = false) String keyword) {
         Pageable pageable = PageRequest.of(page, size);
-        return fileStorageService.listFiles(pageable);
+        return fileStorageService.searchFiles(keyword, pageable);
+    }
+
+    /**
+     * 第九阶段：删除文件
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Map<String, Object>> deleteFile(@PathVariable Long id) {
+        fileStorageService.deleteFile(id);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", 200);
+        body.put("message", "删除成功");
+        return ResponseEntity.ok(body);
     }
 
     /**

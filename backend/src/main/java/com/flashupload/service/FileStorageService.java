@@ -372,6 +372,39 @@ public class FileStorageService {
     }
 
     /**
+     * 第九阶段：按文件名关键字搜索文件列表
+     */
+    public Page<FileInfo> searchFiles(String keyword, Pageable pageable) {
+        if (keyword == null || keyword.trim().isEmpty()) {
+            return fileInfoRepository.findAllByOrderByCreatedAtDesc(pageable);
+        }
+        return fileInfoRepository.findByFileNameContainingIgnoreCaseOrderByCreatedAtDesc(keyword.trim(), pageable);
+    }
+
+    /**
+     * 第九阶段：删除文件
+     * 1. 查询文件元数据
+     * 2. 删除物理文件
+     * 3. 删除数据库记录
+     */
+    @Transactional
+    public void deleteFile(Long id) {
+        FileInfo fileInfo = fileInfoRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("文件不存在，ID: " + id));
+
+        // 删除物理文件
+        Path filePath = Path.of(fileInfo.getStoragePath());
+        try {
+            Files.deleteIfExists(filePath);
+        } catch (IOException e) {
+            System.err.println("删除物理文件失败: " + filePath);
+        }
+
+        // 删除数据库记录
+        fileInfoRepository.deleteById(id);
+    }
+
+    /**
      * 第七阶段：下载文件
      * 1. 根据 ID 查询文件元数据
      * 2. 检查文件是否存在

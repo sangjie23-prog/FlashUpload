@@ -17,4 +17,9 @@ public interface FileInfoRepository extends JpaRepository<FileInfo, Long> {
      * 第七阶段：分页查询文件列表，按创建时间倒序
      */
     Page<FileInfo> findAllByOrderByCreatedAtDesc(Pageable pageable);
+
+    /**
+     * 第九阶段：按文件名关键字搜索，按创建时间倒序
+     */
+    Page<FileInfo> findByFileNameContainingIgnoreCaseOrderByCreatedAtDesc(String keyword, Pageable pageable);
 }

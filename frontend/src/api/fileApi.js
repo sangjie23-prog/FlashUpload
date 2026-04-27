@@ -28,16 +28,22 @@ export function mergeChunks(data) {
   return api.post('/files/merge', data)
 }
 
-export function getFileList(page = 0, size = 10) {
-  return api.get('/files', {
-    params: { page, size }
-  })
+export function getFileList(page = 0, size = 10, keyword = '') {
+  const params = { page, size }
+  if (keyword) {
+    params.keyword = keyword
+  }
+  return api.get('/files', { params })
 }
 
 export function downloadFile(id) {
   return api.get(`/files/${id}/download`, {
     responseType: 'blob'
   })
+}
+
+export function deleteFile(id) {
+  return api.delete(`/files/${id}`)
 }
 
 export default api
