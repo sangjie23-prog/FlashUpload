@@ -1,5 +1,7 @@
 package com.flashupload.controller;
 
+import com.flashupload.dto.ChunkUploadRequest;
+import com.flashupload.dto.ChunkUploadResponse;
 import com.flashupload.dto.FileCheckRequest;
 import com.flashupload.dto.FileCheckResponse;
 import com.flashupload.dto.FileUploadResponse;
@@ -12,8 +14,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -42,6 +44,27 @@ public class FileController {
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public FileUploadResponse upload(@RequestPart("file") MultipartFile file) throws IOException {
         return fileStorageService.upload(file);
+    }
+
+    /**
+     * 第五阶段：上传单个分片，支持断点续传
+     * 请求参数：
+     * - file: 分片文件
+     * - fileMd5: 文件 MD5
+     * - chunkIndex: 分片索引
+     * - totalChunks: 总分片数
+     */
+    @PostMapping(value = "/upload-chunk", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ChunkUploadResponse uploadChunk(
+            @RequestPart("file") MultipartFile chunkFile,
+            @RequestParam("fileMd5") String fileMd5,
+            @RequestParam("chunkIndex") Integer chunkIndex,
+            @RequestParam("totalChunks") Integer totalChunks) throws IOException {
+        ChunkUploadRequest request = new ChunkUploadRequest();
+        request.setFileMd5(fileMd5);
+        request.setChunkIndex(chunkIndex);
+        request.setTotalChunks(totalChunks);
+        return fileStorageService.uploadChunk(chunkFile, request);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

@@ -1,5 +1,7 @@
 package com.flashupload.service;
 
+import com.flashupload.dto.ChunkUploadRequest;
+import com.flashupload.dto.ChunkUploadResponse;
 import com.flashupload.dto.FileCheckRequest;
 import com.flashupload.dto.FileCheckResponse;
 import com.flashupload.dto.FileUploadResponse;
@@ -100,6 +102,87 @@ public class FileStorageService {
             Files.deleteIfExists(targetFilePath);
             throw exception;
         }
+    }
+
+    /**
+     * 第五阶段：上传单个分片
+     * 1. 检查分片是否已上传（断点续传）
+     * 2. 保存分片到本地磁盘
+     * 3. 记录分片信息到数据库
+     * 4. 返回已上传分片列表
+     */
+    @Transactional
+    public ChunkUploadResponse uploadChunk(MultipartFile chunkFile, ChunkUploadRequest request) throws IOException {
+        if (chunkFile == null || chunkFile.isEmpty()) {
+            throw new IllegalArgumentException("分片文件不能为空");
+        }
+        
+        if (request.getFileMd5() == null || request.getChunkIndex() == null || request.getTotalChunks() == null) {
+            throw new IllegalArgumentException("分片元数据不完整");
+        }
+        
+        // 检查分片是否已上传（断点续传场景）
+        FileChunk existingChunk = fileChunkRepository.findByFileMd5AndChunkIndex(
+            request.getFileMd5(), request.getChunkIndex()
+        );
+        
+        if (existingChunk != null) {
+            // 分片已存在，直接返回已上传列表
+            return buildChunkUploadResponse(request.getFileMd5(), request.getChunkIndex());
+        }
+        
+        // 创建分片存储目录
+        Path chunkDirectory = Path.of(storagePath, "chunks", request.getFileMd5());
+        Files.createDirectories(chunkDirectory);
+        
+        // 保存分片文件
+        String chunkFileName = "chunk-" + request.getChunkIndex();
+        Path chunkFilePath = chunkDirectory.resolve(chunkFileName);
+        
+        try (InputStream inputStream = chunkFile.getInputStream()) {
+            Files.copy(inputStream, chunkFilePath, StandardCopyOption.REPLACE_EXISTING);
+        }
+        
+        // 保存分片信息到数据库
+        FileChunk fileChunk = new FileChunk();
+        fileChunk.setFileMd5(request.getFileMd5());
+        fileChunk.setChunkIndex(request.getChunkIndex());
+        fileChunk.setChunkPath(chunkFilePath.toString());
+        fileChunk.setTotalChunks(request.getTotalChunks());
+        
+        fileChunkRepository.save(fileChunk);
+        
+        // 如果文件元数据不存在，创建 UPLOADING 状态的记录
+        Optional<FileInfo> fileInfoOpt = fileInfoRepository.findByFileMd5(request.getFileMd5());
+        if (fileInfoOpt.isEmpty()) {
+            FileInfo fileInfo = new FileInfo();
+            fileInfo.setFileName("unknown");
+            fileInfo.setFileMd5(request.getFileMd5());
+            fileInfo.setFileSize(0L);
+            fileInfo.setContentType(null);
+            fileInfo.setStoragePath("");
+            fileInfo.setStatus(STATUS_UPLOADING);
+            fileInfoRepository.save(fileInfo);
+        }
+        
+        return buildChunkUploadResponse(request.getFileMd5(), request.getChunkIndex());
+    }
+    
+    /**
+     * 构建分片上传响应
+     */
+    private ChunkUploadResponse buildChunkUploadResponse(String fileMd5, Integer currentChunkIndex) {
+        List<FileChunk> chunks = fileChunkRepository.findByFileMd5(fileMd5);
+        List<Integer> uploadedChunks = new ArrayList<>();
+        for (FileChunk chunk : chunks) {
+            uploadedChunks.add(chunk.getChunkIndex());
+        }
+        
+        ChunkUploadResponse response = new ChunkUploadResponse();
+        response.setChunkIndex(currentChunkIndex);
+        response.setUploadedChunks(uploadedChunks);
+        response.setIsComplete(false);
+        return response;
     }
 
     /**
