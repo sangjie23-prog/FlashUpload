@@ -1,0 +1,8 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: flash-upload-backend
+
+# 第一阶段仅保留基础配置，数据库与文件存储配置后续逐步补充。
