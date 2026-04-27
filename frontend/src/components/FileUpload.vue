@@ -133,9 +133,12 @@ const uploadSpeed = ref('0 KB/s')
 const remainingTime = ref('计算中...')
 
 const CHUNK_SIZE = 1 * 1024 * 1024
+const MAX_CONCURRENT = 5
+const MAX_RETRY = 3
 
 let uploadStartTime = 0
 let uploadedBytes = 0
+let activeUploads = 0
 
 const handleFileChange = (file) => {
   selectedFile.value = file.raw
@@ -230,11 +233,52 @@ const uploadChunks = async () => {
   uploadStatus.value = 'uploading'
   totalChunks.value = Math.ceil(selectedFile.value.size / CHUNK_SIZE)
 
+  const pendingChunks = []
   for (let i = 0; i < totalChunks.value; i++) {
-    if (uploadedChunks.value.includes(i)) {
-      continue
+    if (!uploadedChunks.value.includes(i)) {
+      pendingChunks.push(i)
+    }
+  }
+
+  if (pendingChunks.length === 0) {
+    await mergeChunksFile()
+    return
+  }
+
+  const uploadQueue = []
+  let currentIndex = 0
+
+  const uploadNextChunk = async () => {
+    if (currentIndex >= pendingChunks.length) {
+      return
     }
 
+    const chunkIndex = pendingChunks[currentIndex++]
+    await uploadSingleChunkWithRetry(chunkIndex)
+    await uploadNextChunk()
+  }
+
+  const concurrentUploads = []
+  const concurrency = Math.min(MAX_CONCURRENT, pendingChunks.length)
+
+  for (let i = 0; i < concurrency; i++) {
+    concurrentUploads.push(uploadNextChunk())
+  }
+
+  await Promise.all(concurrentUploads)
+
+  if (uploadStatus.value === 'uploading') {
+    await mergeChunksFile()
+  }
+}
+
+const uploadSingleChunkWithRetry = async (chunkIndex) => {
+  const start = chunkIndex * CHUNK_SIZE
+  const end = Math.min(start + CHUNK_SIZE, selectedFile.value.size)
+  const chunkBlob = selectedFile.value.slice(start, end)
+  const chunkSize = end - start
+
+  for (let retry = 0; retry < MAX_RETRY; retry++) {
     while (isPaused.value) {
       await new Promise(resolve => setTimeout(resolve, 100))
     }
@@ -243,28 +287,23 @@ const uploadChunks = async () => {
       return
     }
 
-    const start = i * CHUNK_SIZE
-    const end = Math.min(start + CHUNK_SIZE, selectedFile.value.size)
-    const chunkBlob = selectedFile.value.slice(start, end)
-    const chunkSize = end - start
-
     try {
-      await uploadChunk(chunkBlob, fileMd5.value, i, totalChunks.value)
-      uploadedChunks.value.push(i)
+      await uploadChunk(chunkBlob, fileMd5.value, chunkIndex, totalChunks.value)
+      uploadedChunks.value.push(chunkIndex)
       uploadedBytes += chunkSize
 
       uploadProgress.value = Math.round((uploadedChunks.value.length / totalChunks.value) * 100)
       updateUploadSpeed()
-    } catch (error) {
-      uploadStatus.value = 'error'
-      errorMessage.value = `分片 ${i} 上传失败：${error.message}`
-      ElMessage.error(errorMessage.value)
       return
+    } catch (error) {
+      if (retry === MAX_RETRY - 1) {
+        uploadStatus.value = 'error'
+        errorMessage.value = `分片 ${chunkIndex} 上传失败，已重试 ${MAX_RETRY} 次：${error.message}`
+        ElMessage.error(errorMessage.value)
+        return
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000 * (retry + 1)))
     }
-  }
-
-  if (uploadStatus.value === 'uploading') {
-    await mergeChunksFile()
   }
 }
 
