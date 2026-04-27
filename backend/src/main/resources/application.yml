@@ -28,4 +28,11 @@ flash-upload:
   storage:
     path: storage/files
 
+# MinIO 对象存储配置
+minio:
+  endpoint: http://localhost:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket-name: flash-upload
+
 # 默认使用本地 H2 保证项目随时可启动，切换到 local 配置后可连接真实 MySQL。

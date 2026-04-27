@@ -3,3 +3,9 @@ backend/target/
 backend/storage/
 backend/data/
 storage/
+frontend/node_modules/
+frontend/dist/
+*.log
+*.txt
+*.py
+*.json

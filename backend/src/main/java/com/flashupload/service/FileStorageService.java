@@ -11,6 +11,7 @@ import com.flashupload.entity.FileInfo;
 import com.flashupload.repository.FileChunkRepository;
 import com.flashupload.repository.FileInfoRepository;
 import com.flashupload.util.Md5Utils;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -27,7 +28,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,10 +57,12 @@ public class FileStorageService {
 
     private final FileInfoRepository fileInfoRepository;
     private final FileChunkRepository fileChunkRepository;
+    private final MinIOService minIOService;
 
-    public FileStorageService(FileInfoRepository fileInfoRepository, FileChunkRepository fileChunkRepository) {
+    public FileStorageService(FileInfoRepository fileInfoRepository, FileChunkRepository fileChunkRepository, MinIOService minIOService) {
         this.fileInfoRepository = fileInfoRepository;
         this.fileChunkRepository = fileChunkRepository;
+        this.minIOService = minIOService;
     }
 
     @Transactional
@@ -199,10 +202,12 @@ public class FileStorageService {
 
     /**
      * 第六阶段：合并分片为完整文件
+     * 阶段11：合并完成后上传到 MinIO，清理本地临时文件
      * 1. 校验分片数量是否完整
      * 2. 按分片索引顺序合并文件
-     * 3. 更新文件元数据状态为 COMPLETED
-     * 4. 清理临时分片文件
+     * 3. 上传到 MinIO 对象存储
+     * 4. 更新文件元数据状态为 COMPLETED
+     * 5. 清理临时分片文件和合并文件
      */
     @Transactional
     public FileInfo mergeChunks(MergeRequest request) throws IOException {
@@ -249,6 +254,12 @@ public class FileStorageService {
         // 获取合并后文件大小
         long finalFileSize = Files.size(finalFilePath);
 
+        // 阶段11：上传到 MinIO 对象存储
+        String minioObjectName = request.getFileMd5() + "/" + storedFileName;
+        try (InputStream inputStream = Files.newInputStream(finalFilePath)) {
+            minIOService.uploadFile(minioObjectName, inputStream, request.getContentType(), finalFileSize);
+        }
+
         // 更新或创建文件元数据
         Optional<FileInfo> fileInfoOpt = fileInfoRepository.findByFileMd5(request.getFileMd5());
         FileInfo fileInfo;
@@ -258,7 +269,7 @@ public class FileStorageService {
             fileInfo.setFileName(request.getFileName());
             fileInfo.setFileSize(finalFileSize);
             fileInfo.setContentType(request.getContentType());
-            fileInfo.setStoragePath(finalFilePath.toString());
+            fileInfo.setStoragePath(minioObjectName);
             fileInfo.setStatus(STATUS_COMPLETED);
         } else {
             fileInfo = new FileInfo();
@@ -266,7 +277,7 @@ public class FileStorageService {
             fileInfo.setFileMd5(request.getFileMd5());
             fileInfo.setFileSize(finalFileSize);
             fileInfo.setContentType(request.getContentType());
-            fileInfo.setStoragePath(finalFilePath.toString());
+            fileInfo.setStoragePath(minioObjectName);
             fileInfo.setStatus(STATUS_COMPLETED);
         }
 
@@ -274,6 +285,13 @@ public class FileStorageService {
 
         // 清理分片文件和数据库记录
         deleteChunks(chunks);
+
+        // 阶段11：清理本地合并文件
+        try {
+            Files.deleteIfExists(finalFilePath);
+        } catch (IOException e) {
+            System.err.println("清理本地合并文件失败: " + finalFilePath);
+        }
 
         return savedFileInfo;
     }
@@ -383,8 +401,9 @@ public class FileStorageService {
 
     /**
      * 第九阶段：删除文件
+     * 阶段11：从 MinIO 删除文件
      * 1. 查询文件元数据
-     * 2. 删除物理文件
+     * 2. 从 MinIO 删除文件
      * 3. 删除数据库记录
      */
     @Transactional
@@ -392,12 +411,11 @@ public class FileStorageService {
         FileInfo fileInfo = fileInfoRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("文件不存在，ID: " + id));
 
-        // 删除物理文件
-        Path filePath = Path.of(fileInfo.getStoragePath());
+        // 阶段11：从 MinIO 删除文件
         try {
-            Files.deleteIfExists(filePath);
-        } catch (IOException e) {
-            System.err.println("删除物理文件失败: " + filePath);
+            minIOService.deleteFile(fileInfo.getStoragePath());
+        } catch (Exception e) {
+            System.err.println("删除 MinIO 文件失败: " + fileInfo.getStoragePath());
         }
 
         // 删除数据库记录
@@ -406,20 +424,20 @@ public class FileStorageService {
 
     /**
      * 第七阶段：下载文件
+     * 阶段11：从 MinIO 读取文件流
      * 1. 根据 ID 查询文件元数据
-     * 2. 检查文件是否存在
+     * 2. 从 MinIO 读取文件流
      * 3. 返回文件资源供下载
      */
     public ResponseEntity<Resource> downloadFile(Long id) {
         FileInfo fileInfo = fileInfoRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("文件不存在，ID: " + id));
 
-        Path filePath = Path.of(fileInfo.getStoragePath());
-        if (!Files.exists(filePath)) {
-            throw new IllegalArgumentException("文件物理文件不存在: " + fileInfo.getStoragePath());
-        }
+        // 阶段11：从 MinIO 读取文件流
+        String minioObjectName = fileInfo.getStoragePath();
+        InputStream minioInputStream = minIOService.downloadFile(minioObjectName);
 
-        Resource resource = new FileSystemResource(filePath);
+        Resource resource = new InputStreamResource(minioInputStream);
 
         String encodedFileName = URLEncoder.encode(fileInfo.getFileName(), StandardCharsets.UTF_8)
             .replace("+", "%20");
